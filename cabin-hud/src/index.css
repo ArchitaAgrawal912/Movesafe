@@ -1,0 +1,35 @@
+@import 'tailwindcss';
+
+/*
+ * Semantic colour lives in src/theme.ts, because the radar canvas needs the
+ * same values in JavaScript. Tailwind here handles layout and typography only.
+ */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #080b0f;
+  color: #e6edf3;
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  /* The HUD is a fixed-viewport instrument, not a scrolling document. */
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Touchscreens in a bouncing cab: no text selection, no long-press menus. */
+button,
+label {
+  user-select: none;
+}
+
+input[type='range'] {
+  height: 18px;
+  cursor: pointer;
+}
