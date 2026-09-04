@@ -4,8 +4,20 @@ Two sketches, two ESP32 boards.
 
 | Sketch | Role | Power |
 |---|---|---|
-| `tag-node/` | The **other vehicle**. Broadcasts an ESP-NOW beacon 20×/s. | Power bank — you carry this one around. |
-| `anchor-node/` | **This vehicle**. Hears beacons, reads their RSSI, prints JSON over USB. | USB cable to the laptop running the HUD. |
+| `tag-node/` | The **other vehicle**. Broadcasts an ESP-NOW beacon 20×/s, and sounds its buzzer on what it hears back. | Power bank — you carry this one around. |
+| `anchor-node/` | **This vehicle**. Hears beacons, reads their RSSI, prints JSON over USB, sounds its buzzer, and broadcasts 10×/s so the tag has something to measure. | USB cable to the laptop running the HUD. |
+
+Both boards broadcast and both listen. The anchor gains nothing from its own
+transmission — it is there so the carried tag can measure the anchor and sound
+its buzzer, since a node that only transmitted could never measure anything.
+
+## Wiring
+
+One buzzer per board, on **GPIO13** (`BUZZER_PIN`), driven HIGH when a peer is
+closer than `BUZZER_RSSI` (−65 dBm, about 1 m on these boards). An active
+buzzer wired GPIO13 → buzzer + , buzzer − → GND. Raise `BUZZER_RSSI` to make it
+fire closer in; it is a `#define` at the top of each sketch and both should
+match. If a board has no buzzer fitted, leave it — the pin just toggles.
 
 ## Requirements
 
@@ -55,10 +67,15 @@ decentralised V2V property the real UWB link will have, so nothing about the
 system architecture changes when the DW3000 boards arrive — only the ranging
 method does.
 
-**Why the firmware does no maths.** It reports raw RSSI and nothing else. All
-filtering, path-loss conversion and threshold logic live in the web app, where
-they can be tuned live against a tape measure. Firmware you have to re-upload
-to tune is firmware you will not tune.
+**Why the firmware does almost no maths.** It reports raw RSSI and nothing else.
+Filtering, path-loss conversion and the alert thresholds live in the web app,
+where they can be tuned live against a tape measure. Firmware you have to
+re-upload to tune is firmware you will not tune.
+
+The buzzer is the one exception, and it is deliberately crude: one raw RSSI
+comparison, no filtering, no hysteresis. It is a failsafe that has to work when
+no laptop is attached, so it cannot depend on anything running in a browser.
+The calibrated alert is still the screen's.
 
 **Why `n` is in the payload.** It is a packet counter. The anchor keeps
 reporting its last reading at 10 Hz even when no new packet has arrived; the

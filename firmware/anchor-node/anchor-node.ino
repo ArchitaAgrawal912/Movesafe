@@ -36,12 +36,29 @@
 #define PEER_TIMEOUT  3000     // drop a peer unheard for this long, ms
 #define MAX_PEERS     8
 
+// Cab buzzer. This is a hardware failsafe, not the main alert: it runs on raw
+// RSSI with a fixed threshold and keeps sounding whether or not a laptop is
+// plugged in. The screen alarm is the calibrated one and engages earlier, so
+// the two together read as a two-stage warning - screen first, buzzer as the
+// peer closes further. Raise BUZZER_RSSI to make it fire closer in.
+#define BUZZER_PIN    13
+#define BUZZER_RSSI   -65      // dBm; -65 measured at ~1 m on these boards
+
 // ----------------------------------------------------------------- payload
 
 typedef struct __attribute__((packed)) {
   char     id[12];
   uint32_t seq;
 } MovesafeBeacon;
+
+// The anchor broadcasts its own beacon as well as listening. It gains nothing
+// from this itself - it is so the carried tag can measure the anchor and sound
+// its own buzzer, since a tag that only transmitted could never measure
+// anything. ESP-NOW does not loop a broadcast back to its sender, so this
+// never pollutes our own peer table.
+static const uint8_t BROADCAST_ADDR[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static MovesafeBeacon selfBeacon;
+static uint32_t       selfSeq = 0;
 
 // ---------------------------------------------------------------- peer table
 
@@ -105,6 +122,8 @@ void onBeacon(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
 
 void setup() {
   Serial.begin(115200);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
   memset(peers, 0, sizeof(peers));
 
   WiFi.mode(WIFI_STA);
@@ -119,6 +138,15 @@ void setup() {
   }
   esp_now_register_recv_cb(onBeacon);
 
+  esp_now_peer_info_t peer = {};
+  memcpy(peer.peer_addr, BROADCAST_ADDR, 6);
+  peer.channel = WIFI_CHANNEL;
+  peer.encrypt = false;
+  esp_now_add_peer(&peer);
+
+  memset(&selfBeacon, 0, sizeof(selfBeacon));
+  strncpy(selfBeacon.id, SELF_ID, sizeof(selfBeacon.id) - 1);
+
   Serial.println("{\"t\":0,\"self\":\"" SELF_ID "\",\"peers\":[],\"boot\":1}");
 }
 
@@ -130,6 +158,9 @@ void loop() {
   if ((int32_t)(now - nextReport) < 0) return;
   nextReport = now + REPORT_MS;
 
+  selfBeacon.seq = ++selfSeq;
+  esp_now_send(BROADCAST_ADDR, (const uint8_t *)&selfBeacon, sizeof(selfBeacon));
+
   // Copy under lock, format outside it: Serial.write is far too slow to hold
   // a critical section across.
   PeerSlot snapshot[MAX_PEERS];
@@ -139,6 +170,17 @@ void loop() {
     if (peers[i].used && (now - peers[i].lastSeen) > PEER_TIMEOUT) peers[i].used = false;
   }
   portEXIT_CRITICAL(&peersMux);
+
+  // Buzzer is driven here rather than in the receive callback: the callback
+  // runs on the WiFi task and GPIO work does not belong there. A peer that has
+  // gone quiet ages out of the table above, so silence on signal loss is free.
+  bool tooClose = false;
+  for (int i = 0; i < MAX_PEERS; i++) {
+    if (!snapshot[i].used) continue;
+    if ((now - snapshot[i].lastSeen) > PEER_TIMEOUT) continue;
+    if (snapshot[i].rssi > BUZZER_RSSI) { tooClose = true; break; }
+  }
+  digitalWrite(BUZZER_PIN, tooClose ? HIGH : LOW);
 
   char line[512];
   int  n = snprintf(line, sizeof(line), "{\"t\":%lu,\"self\":\"%s\",\"peers\":[",
