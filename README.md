@@ -8,10 +8,15 @@ vehicles appear as dots on a forward-looking radar with live distance and
 time-to-collision. Inside 3 m the dot goes red and a proximity alarm sounds;
 back outside it, green.
 
+Both boards also carry a buzzer on GPIO13, driven from a fixed RSSI threshold
+in firmware. That one keeps sounding with no laptop attached, and it engages
+closer in than the calibrated screen alarm — screen first, buzzer as the peer
+keeps closing.
+
 ```
 ESP32 #2  "TRUCK-02"  (tag — carried, battery powered)
-    │  ESP-NOW broadcast @20 Hz
-    ▼
+    ▲ │  ESP-NOW broadcast, both ways: tag @20 Hz, anchor @10 Hz
+    │ ▼  each board sounds its own buzzer on raw RSSI
 ESP32 #1  "TRUCK-01"  (anchor — USB to the laptop)
     │  reads packet RSSI, one JSON line per 100 ms
     ▼  USB serial @115200
@@ -128,8 +133,8 @@ cabin-hud/src/
   alerts/       threatState · useBeeper
   components/   RadarCanvas · StatusBar · ThreatPanel · HazardCard · CalibrationDrawer
 firmware/
-  tag-node/     ESP-NOW broadcaster
-  anchor-node/  ESP-NOW receiver → JSON over USB
+  tag-node/     ESP-NOW beacon + buzzer
+  anchor-node/  ESP-NOW beacon + buzzer → JSON over USB
 ```
 
 `TelemetrySource` (`src/telemetry/types.ts`) is the seam that keeps the UI

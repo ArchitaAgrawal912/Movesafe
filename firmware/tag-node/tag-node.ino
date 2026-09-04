@@ -25,6 +25,14 @@
 #define WIFI_CHANNEL   1            // must be identical on tag and anchor
 #define TX_INTERVAL_MS 50           // 20 Hz
 
+// Cab buzzer, same fixed-threshold failsafe the anchor runs. The tag is
+// carried, so this is the alert the person walking the "other vehicle" hears -
+// there is no screen on this end. It needs the anchor to be broadcasting back,
+// which it does; a tag that only transmitted could never measure anything.
+#define BUZZER_PIN     13
+#define BUZZER_RSSI    -65          // dBm; -65 measured at ~1 m on these boards
+#define PEER_TIMEOUT   3000         // silence the buzzer if unheard this long, ms
+
 #ifndef LED_BUILTIN
 #define LED_BUILTIN 2
 #endif
@@ -43,11 +51,29 @@ static const uint8_t BROADCAST_ADDR[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 static MovesafeBeacon beacon;
 static uint32_t seq = 0;
 
+// Written on the WiFi task, read on the loop task. Single aligned words, so
+// volatile is enough here and no lock is needed.
+static volatile int8_t   lastRssi   = -127;
+static volatile uint32_t lastHeard  = 0;
+
+// ----------------------------------------------------------------- receive
+
+// The anchor broadcasts too, so the tag can measure it and sound its own
+// buzzer. RSSI only is taken here; the GPIO is driven from loop(), because
+// this callback runs on the WiFi task and hardware work does not belong there.
+void onBeacon(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  if (len < (int)sizeof(MovesafeBeacon)) return;
+  lastRssi  = info->rx_ctrl->rssi;
+  lastHeard = millis();
+}
+
 // -------------------------------------------------------------------- init
 
 void setup() {
   Serial.begin(115200);
   pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
 
   // STA mode with no connection: the radio is up, but we never associate
   // with an access point. ESP-NOW does not need one.
@@ -62,6 +88,8 @@ void setup() {
       delay(100);
     }
   }
+
+  esp_now_register_recv_cb(onBeacon);
 
   esp_now_peer_info_t peer = {};
   memcpy(peer.peer_addr, BROADCAST_ADDR, 6);
@@ -87,6 +115,10 @@ void setup() {
 void loop() {
   beacon.seq = ++seq;
   esp_now_send(BROADCAST_ADDR, (const uint8_t *)&beacon, sizeof(beacon));
+
+  const uint32_t now  = millis();
+  const bool     live = (now - lastHeard) < PEER_TIMEOUT;
+  digitalWrite(BUZZER_PIN, (live && lastRssi > BUZZER_RSSI) ? HIGH : LOW);
 
   // Visible heartbeat, so you can tell the node is alive while carrying it
   // around with no serial monitor attached.
